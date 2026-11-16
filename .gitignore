@@ -1,0 +1,17 @@
+.DS_Store
+hs_err_pid*.log
+**/.dart_tool/
+**/build/
+**/native/target/
+apps/**/.flutter-plugins-dependencies
+apps/**/local.properties
+apps/**/macos/Flutter/ephemeral/
+apps/**/linux/flutter/ephemeral/
+apps/**/windows/flutter/ephemeral/
+apps/**/android/key.properties
+*.jks
+*.keystore
+apps/**/ios/Flutter/Generated.xcconfig
+apps/**/ios/Flutter/flutter_export_environment.sh
+apps/**/ios/Flutter/ephemeral/
+apps/**/ios/Pods/

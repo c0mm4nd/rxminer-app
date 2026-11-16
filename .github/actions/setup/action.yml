@@ -1,0 +1,36 @@
+name: Set up Flutter and Rust
+description: Flutter from its git tag (works on every runner, including Linux arm64) and rustup.
+inputs:
+  flutter:
+    description: Flutter release tag
+    default: '3.50.0'
+runs:
+  using: composite
+  steps:
+    - name: Cache Flutter
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.tool_cache }}/flutter-${{ inputs.flutter }}
+        key: flutter-${{ inputs.flutter }}-${{ runner.os }}-${{ runner.arch }}
+    - name: Install Flutter
+      shell: bash
+      run: |
+        root="$RUNNER_TOOL_CACHE/flutter-${{ inputs.flutter }}"
+        if [ ! -d "$root/bin" ]; then
+          git clone --depth 1 --branch "${{ inputs.flutter }}" https://github.com/flutter/flutter.git "$root"
+        fi
+        echo "$root/bin" >> "$GITHUB_PATH"
+        echo "FLUTTER_ROOT=$root" >> "$GITHUB_ENV"
+    - name: Cache Cargo downloads
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/rxminer/native/Cargo.lock') }}
+    - name: Check tools
+      shell: bash
+      run: |
+        flutter config --no-analytics --no-cli-animations
+        flutter --version
+        rustup --version

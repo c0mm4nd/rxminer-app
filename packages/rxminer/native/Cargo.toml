@@ -1,0 +1,20 @@
+[package]
+name = "rxminer-ffi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# Upstream miner, pinned to a reviewed commit. Only its public library API is used.
+rxminer = { git = "https://github.com/c0mm4nd/rxminer", rev = "6882dfbaab30dbe369f3192accad4db329cccc19" }
+clap = "4"
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

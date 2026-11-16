@@ -1,0 +1,211 @@
+name: release
+
+# Push a tag v<rxminer version>.<app revision>, e.g. v0.2.0.1, to build every
+# platform and publish a GitHub Release. Run it by hand to build without
+# publishing. See scripts/version.py.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Check version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            python3 scripts/version.py check --tag "$GITHUB_REF_NAME"
+          else
+            python3 scripts/version.py check
+          fi
+          python3 scripts/version.py env >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            os: windows-2022
+          - target: macos-universal
+            os: macos-15
+          - target: ios
+            os: macos-15
+          - target: linux-x64
+            os: ubuntu-24.04
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+          - target: android
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/miner
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Version
+        run: |
+          python3 "$GITHUB_WORKSPACE/scripts/version.py" env > version.env
+          # shellcheck disable=SC1091
+          source version.env && rm version.env
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"   # keeps a -beta.1 style suffix
+          else
+            VERSION="$VERSION-dev.$GITHUB_RUN_NUMBER"
+          fi
+          number=$BUILD_NUMBER
+          # Android compares version codes across all releases, so it gets
+          # one that grows with the miner version too.
+          [ "${{ matrix.target }}" = android ] && number=$ANDROID_VERSION_CODE
+          {
+            echo "VERSION=$VERSION"
+            echo "BUILD_ARGS=--release --build-name=$BUILD_NAME --build-number=$number --dart-define=APP_VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux' && matrix.target != 'android'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+      - name: Build Linux
+        if: startsWith(matrix.target, 'linux-')
+        run: |
+          read -ra args <<< "$BUILD_ARGS"
+          flutter build linux "${args[@]}"
+          arch=$([ "${{ matrix.target }}" = linux-arm64 ] && echo arm64 || echo x64)
+          tar -C "build/linux/$arch/release/bundle" -czf \
+            "$GITHUB_WORKSPACE/dist/RxMiner-$VERSION-${{ matrix.target }}.tar.gz" .
+
+      - name: Build Windows
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        run: |
+          $buildArgs = $env:BUILD_ARGS -split ' '
+          flutter build windows @buildArgs
+          Compress-Archive -Path build/windows/x64/runner/Release/* `
+            -DestinationPath "$env:GITHUB_WORKSPACE/dist/RxMiner-$env:VERSION-windows-x64.zip"
+
+      - name: Build macOS
+        if: matrix.target == 'macos-universal'
+        run: |
+          read -ra args <<< "$BUILD_ARGS"
+          flutter build macos "${args[@]}"
+          ditto -c -k --keepParent build/macos/Build/Products/Release/RxMiner.app \
+            "$GITHUB_WORKSPACE/dist/RxMiner-$VERSION-macos-universal.zip"
+
+      # Unsigned: sideloading tools (AltStore, SideStore, Sideloadly) sign it
+      # with the installing user's own Apple ID.
+      - name: Build iOS
+        if: matrix.target == 'ios'
+        run: |
+          read -ra args <<< "$BUILD_ARGS"
+          flutter build ios "${args[@]}" --no-codesign
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -qry "$GITHUB_WORKSPACE/dist/RxMiner-$VERSION-ios-unsigned.ipa" Payload
+
+      - uses: actions/setup-java@v6
+        if: matrix.target == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android signing key
+        if: matrix.target == 'android'
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE" ]; then
+            # A debug-signed APK cannot be updated by a properly signed one later.
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              echo "::error::Set the ANDROID_KEYSTORE_* secrets before tagging a release."
+              exit 1
+            fi
+            echo "::warning::No signing key; this test APK uses the debug key."
+            exit 0
+          fi
+          echo "$KEYSTORE" | base64 --decode > android/release.jks
+          cat > android/key.properties <<PROPS
+          storeFile=release.jks
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          PROPS
+      - name: Build Android
+        if: matrix.target == 'android'
+        run: |
+          # One version code for every ABI; Flutter would otherwise add 1000 per ABI.
+          echo "force-version-code-ignoring-abi=true" >> android/gradle.properties
+          read -ra args <<< "$BUILD_ARGS"
+          flutter build apk "${args[@]}" --split-per-abi
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" \
+              "$GITHUB_WORKSPACE/dist/RxMiner-$VERSION-android-$abi.apk"
+          done
+          rm -f android/release.jks android/key.properties
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [version, build]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums and notes
+        run: |
+          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+          miner=$(python3 scripts/version.py env | sed -n 's/^BUILD_NAME=//p')
+          commit=$(sed -n 's/.*rxminer?rev=\([0-9a-f]*\).*/\1/p' packages/rxminer/native/Cargo.lock | head -1)
+          {
+            echo "Built with [rxminer $miner](https://github.com/c0mm4nd/rxminer/commit/$commit) (\`${commit:0:7}\`)."
+            echo
+            cat docs/RELEASE_NOTES.md
+          } > notes.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: RxMiner App ${{ github.ref_name }}
+          body_path: notes.md
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.apk
+            dist/*.ipa
+            dist/SHA256SUMS

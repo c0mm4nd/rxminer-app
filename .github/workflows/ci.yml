@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Analyze and test
+    # Goldens were recorded on macOS; text rendering is compared there.
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Version
+        run: python3 scripts/version.py check
+      - uses: ./.github/actions/setup
+      - name: Package
+        working-directory: packages/rxminer
+        run: |
+          dart pub get
+          dart format --output=none --set-exit-if-changed lib test
+          dart analyze --fatal-infos
+          dart test
+      - name: App
+        working-directory: apps/miner
+        run: |
+          flutter pub get
+          dart format --output=none --set-exit-if-changed lib test
+          flutter analyze --fatal-infos
+          flutter test

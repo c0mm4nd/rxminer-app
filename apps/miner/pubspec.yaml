@@ -1,0 +1,31 @@
+name: rxminer_app
+description: RxMiner for desktop and mobile.
+publish_to: none
+version: 0.2.0+1
+environment:
+  sdk: ^3.14.0
+dependencies:
+  flutter:
+    sdk: flutter
+  material_ui: 1.1.0
+  path_provider: 2.1.6
+  rxminer:
+    path: ../../packages/rxminer
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 6.0.0
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: RxMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/JetBrainsMono-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+  assets:
+    - assets/fonts/OFL-JetBrainsMono.txt

@@ -1,0 +1,13 @@
+name: rxminer
+description: Embeds the RxMiner RandomX miner in Dart and Flutter apps through FFI, with its loopback HTTP API and log.
+version: 0.1.0
+homepage: https://github.com/c0mm4nd/rxminer
+environment:
+  sdk: ^3.14.0
+dependencies:
+  hooks: 2.2.0
+  code_assets: 2.2.0
+  native_toolchain_rust: 1.1.1
+  ffi: 2.2.0
+dev_dependencies:
+  test: 1.31.2
